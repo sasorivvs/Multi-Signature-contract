@@ -11,13 +11,15 @@ contract Multisig{
     struct Transaction{
         address to;
         uint amount;
+        uint duration;
+        uint timestamp;
         bool executed;
     }
 
     mapping(uint => Transaction) public transactions;
     mapping(uint => mapping(address => bool)) public confirmations;
 
-    event Submited(uint txId,address initiator, address to, uint amount);
+    event Submited(uint txId,address initiator, address to, uint amount, uint duration,uint timestamp);
     event Confirmed(uint txId, address owner);
     event Executed(uint txId, address to, uint amount, uint timestamp);
 
@@ -39,13 +41,13 @@ contract Multisig{
     }
 
 
-    function addTransaction(address _to, uint _amount) internal returns(uint){
+    function addTransaction(address _to, uint _amount, uint _duration) internal returns(uint){
         require(isOwner(msg.sender),"Not An Owner");
         uint txId = transactionsCount;
 
-        transactions[txId] = Transaction(_to,_amount, false);
+        transactions[txId] = Transaction(_to,_amount,_duration ,block.timestamp,false);
         transactionsCount++;
-        emit Submited(txId,msg.sender,_to,_amount);
+        emit Submited(txId,msg.sender,_to,_amount, _duration,block.timestamp);
         return(txId);
 
     }    
@@ -72,9 +74,18 @@ contract Multisig{
         return transactions[_txId].executed;
     }
 
+    function IsExpired(uint _txId) internal view returns(bool){
+        if( transactions[_txId].duration + transactions[_txId].timestamp < block.timestamp ){
+            return true;
+        }
+        return false;
+        
+    }
+
     function executeTransaction(uint _txId) internal{
         require(isConfirmed(_txId), "Not Confirmed");
         require(!isExecuted(_txId), "Already Executed");
+        require(!IsExpired(_txId), "Transaction Expired");
 
         Transaction memory _tx = transactions[_txId];
         transactions[_txId].executed = true;
@@ -87,10 +98,10 @@ contract Multisig{
     }
 
 
-    function submitTransaction(address _to, uint _amount) public {
+    function submitTransaction(address _to, uint _amount, uint _duration) public {
         require(isOwner(msg.sender),"Not An Owner");
 
-        uint _txId = addTransaction(_to,_amount);
+        uint _txId = addTransaction(_to,_amount,_duration );
         confirmTransaction(_txId);
     }
 

@@ -1,4 +1,5 @@
 import { loadFixture, ethers, expect } from "./setup";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
 
 describe("Multisig", function () {
   async function deploy() {
@@ -32,27 +33,37 @@ describe("Multisig", function () {
 
   it("should submit transaction offered by an owner ", async () => {
     const { owner1, notOwner2, multisig } = await loadFixture(deploy);
-
-    await multisig.connect(owner1).submitTransaction(notOwner2.address, 1);
+    const amount = 2;
+    const duration = 100;
+    const transaction = await multisig
+      .connect(owner1)
+      .submitTransaction(notOwner2.address, amount, duration);
+    const block = await transaction?.getBlock();
+    const timestamp = block?.timestamp;
 
     const tx = await multisig.transactions(0);
     expect(tx[0]).to.eq(notOwner2.address);
-    expect(tx[1]).to.eq(1);
-    expect(tx[2]).to.eq(false);
+    expect(tx[1]).to.eq(amount);
+    expect(tx[2]).to.eq(duration);
+    expect(tx[3]).to.eq(timestamp);
+    expect(tx[4]).to.eq(false);
   });
 
   it("should fail if the transaction offered by not an owner", async () => {
     const { notOwner1, notOwner2, multisig } = await loadFixture(deploy);
-
+    const amount = 2;
+    const duration = 100;
     await expect(
-      multisig.connect(notOwner1).submitTransaction(notOwner2.address, 1)
+      multisig
+        .connect(notOwner1)
+        .submitTransaction(notOwner2.address, amount, duration)
     ).to.be.revertedWith("Not An Owner");
   });
 
   it("should accept the confirmation sent by the owner ", async () => {
     const { owner1, owner2, notOwner2, multisig } = await loadFixture(deploy);
 
-    await multisig.connect(owner1).submitTransaction(notOwner2.address, 1);
+    await multisig.connect(owner1).submitTransaction(notOwner2.address, 1, 100);
     await multisig.connect(owner2).confirmTransaction(0);
 
     const confirmation = await multisig.confirmations(0, owner2);
@@ -63,8 +74,11 @@ describe("Multisig", function () {
     const { owner1, notOwner1, notOwner2, multisig } = await loadFixture(
       deploy
     );
-
-    await multisig.connect(owner1).submitTransaction(notOwner2.address, 1);
+    const amount = 2;
+    const duration = 100;
+    await multisig
+      .connect(owner1)
+      .submitTransaction(notOwner2.address, amount, duration);
     await expect(
       multisig.connect(notOwner1).confirmTransaction(0)
     ).to.be.revertedWith("Not An Owner");
@@ -75,12 +89,15 @@ describe("Multisig", function () {
       deploy
     );
     const amount = 2; //wei
+    const duration = 100;
 
     await owner1.sendTransaction({
       to: multisig.target,
       value: amount,
     });
-    await multisig.connect(owner1).submitTransaction(notOwner2.address, amount);
+    await multisig
+      .connect(owner1)
+      .submitTransaction(notOwner2.address, amount, duration);
     await multisig.connect(owner2).confirmTransaction(0);
 
     await expect(
@@ -92,16 +109,44 @@ describe("Multisig", function () {
     await expect((await multisig.transactions(0)).executed).to.eq(true);
   });
 
-  it("should fail if it's repeated execution", async () => {
-    const { owner1, owner2, owner3, owner4, notOwner2, multisig } =
-      await loadFixture(deploy);
+  it("should fail if transaction is Expired", async () => {
+    const { owner1, owner2, owner3, notOwner2, multisig } = await loadFixture(
+      deploy
+    );
     const amount = 2; //wei
+    const duration = 100;
 
     await owner1.sendTransaction({
       to: multisig.target,
       value: amount,
     });
-    await multisig.connect(owner1).submitTransaction(notOwner2.address, amount);
+    await multisig
+      .connect(owner1)
+      .submitTransaction(notOwner2.address, amount, duration);
+    await multisig.connect(owner2).confirmTransaction(0);
+    const timestamp1 = await time.latest();
+    console.log(timestamp1);
+
+    const timestamp2 = await time.increase(duration);
+    console.log(timestamp2);
+    await expect(
+      multisig.connect(owner3).confirmTransaction(0)
+    ).to.be.revertedWith("Transaction Expired");
+  });
+
+  it("should fail if it's repeated execution", async () => {
+    const { owner1, owner2, owner3, owner4, notOwner2, multisig } =
+      await loadFixture(deploy);
+    const amount = 2; //wei
+    const duration = 100;
+
+    await owner1.sendTransaction({
+      to: multisig.target,
+      value: amount,
+    });
+    await multisig
+      .connect(owner1)
+      .submitTransaction(notOwner2.address, amount, duration);
     await multisig.connect(owner2).confirmTransaction(0);
     await multisig.connect(owner3).confirmTransaction(0);
     await expect(
@@ -111,33 +156,53 @@ describe("Multisig", function () {
 
   it("should emit Submited event", async () => {
     const { owner1, notOwner2, multisig } = await loadFixture(deploy);
-
-    await expect(
-      multisig.connect(owner1).submitTransaction(notOwner2.address, 1)
-    )
+    const amount = 2; //wei
+    const duration = 100;
+    const tx = await multisig
+      .connect(owner1)
+      .submitTransaction(notOwner2.address, amount, duration);
+    const transaction = await tx.wait();
+    const block = await transaction?.getBlock();
+    const timestamp = block?.timestamp;
+    await expect(tx)
       .to.emit(multisig, "Submited")
-      .withArgs(0, owner1.address, notOwner2.address, 1);
+      .withArgs(
+        0,
+        owner1.address,
+        notOwner2.address,
+        amount,
+        duration,
+        timestamp
+      );
   });
 
   it("should emit Confirmed event", async () => {
     const { owner1, notOwner2, multisig } = await loadFixture(deploy);
-    await multisig.connect(owner1).submitTransaction(notOwner2.address, 1);
+    const amount = 2; //wei
+    const duration = 100;
+    await multisig
+      .connect(owner1)
+      .submitTransaction(notOwner2.address, amount, duration);
 
     await expect(multisig.connect(owner1).confirmTransaction(0))
       .to.emit(multisig, "Confirmed")
       .withArgs(0, owner1.address);
   });
+
   it("should emit Executed event", async () => {
     const { owner1, owner2, owner3, notOwner2, multisig } = await loadFixture(
       deploy
     );
     const amount = 2; //wei
+    const duration = 100;
 
     await owner1.sendTransaction({
       to: multisig.target,
       value: amount,
     });
-    await multisig.connect(owner1).submitTransaction(notOwner2.address, amount);
+    await multisig
+      .connect(owner1)
+      .submitTransaction(notOwner2.address, amount, duration);
     await multisig.connect(owner2).confirmTransaction(0);
 
     const tx = await multisig.connect(owner3).confirmTransaction(0);
